@@ -6,21 +6,28 @@ on:
     push:
         branches: [main]
 
+# Workflow-level, so the build job and the deploy job cannot disagree about
+# which image they mean. Written out in lowercase (for Docker).
+env:
+  IMAGE: ghcr.io/nicholaslennox/cd-demo-api
+
 jobs:
     test:
         runs-on: ubuntu-latest
 
-        # The tests assert that the app reports the environment it was given.
-        # This provides a value for the GitHub runner to use (scoped to the test job).
+        # The tests assert the app reports the environment it was given, and
+        # .env never reaches the runner. Without this the app reports "default"
+        # and the test fails. Scoped to this job.
         env:
           ENVIRONMENT: test
 
         steps:
-            # Checkout pulls the repo code onto the runner
+            # Jobs start on an empty machine, so the code has to be fetched
             - name: Checkout code
               uses: actions/checkout@v4
 
-            # Setup our node version on the runner (defaults to latest)
+            # Runners ship whatever Node version is current. Pin it to the one
+            # the Dockerfile uses, so we test on what we ship.
             - name: Set up Node.js 22
               uses: actions/setup-node@v4
               with:
@@ -33,22 +40,17 @@ jobs:
               run: npm test
 
     build-and-push:
-        # Waits for the test job to pass before starting
+        # Only build an image out of code that passed
         needs: test
 
-        # The default GITHUB_TOKEN only grants read access, so grant it push access to ghcr
+        # GITHUB_TOKEN is read-only by default, we need to write to our packages to add an image to our registry.
         permissions:
           packages: write
-          # If we had a private repository, we would need to include contents:read as a permission for the checkout action to function
 
         runs-on: ubuntu-latest
 
-        # The image name, stated in lowercase rather than derived from the repository
-        env:
-          IMAGE: nicholaslennox/cd-demo-api
-
         steps:
-            # Each job runs on a fresh runner, so we need to checkout again
+            # Each job gets its own fresh runner, so we check out again
             - name: Checkout code
               uses: actions/checkout@v4
 
@@ -66,8 +68,37 @@ jobs:
                   # Build context: the repo root, where the Dockerfile lives
                   context: .
                   push: true
+                  # One build, two names: the SHA never moves, latest always does
                   tags: |
-                    ghcr.io/${{ env.IMAGE }}:${{ github.sha }}
-                    ghcr.io/${{ env.IMAGE }}:latest
+                    ${{ env.IMAGE }}:${{ github.sha }}
+                    ${{ env.IMAGE }}:latest
 
-    # TODO: Add a deploy to App Service job
+    # Job created for the lesson
+    deploy-app-service:
+      # There is nothing to deploy until the image is in the registry
+      needs: build-and-push
+
+      runs-on: ubuntu-latest
+
+      permissions:
+        # Lets Actions create the OIDC token that azure/login trades for an Azure
+        # one, so no Azure password is stored in the repository
+        id-token: write
+
+      env:
+        APP_SERVICE_NAME: cd-demo-bed2
+
+      steps:
+        - name: Log into Azure
+          uses: azure/login@v3
+          with:
+            client-id: ${{ secrets.AZURE_CLIENT_ID }}
+            tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+            subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+        - name: Deploy Container to Azure Web App
+          uses: azure/webapps-deploy@v3
+          with:
+            app-name: ${{ env.APP_SERVICE_NAME }}
+            # Deploy our specific version instead of latest
+            images: '${{ env.IMAGE }}:${{ github.sha }}'
