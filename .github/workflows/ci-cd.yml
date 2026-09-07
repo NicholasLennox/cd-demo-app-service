@@ -1,0 +1,67 @@
+# Name of workflow
+name: CI/CD
+
+# Trigger
+on:
+    push:
+        branches: [main]
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+
+        # The tests assert that the app reports the environment it was given.
+        # This provides a value for the GitHub runner to use (scoped to the test job).
+        env:
+          ENVIRONMENT: test
+
+        steps:
+            # Checkout pulls the repo code onto the runner
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Run tests
+              run: npm test
+
+    build-and-push:
+        # Waits for the test job to pass before starting
+        needs: test
+
+        # The default GITHUB_TOKEN only grants read access, so grant it push access to ghcr
+        permissions:
+          packages: write
+          # If we had a private repository, we would need to include contents:read as a permission for the checkout action to function
+
+        runs-on: ubuntu-latest
+
+        # The image name, stated in lowercase rather than derived from the repository
+        env:
+          IMAGE: nicholaslennox/cd-demo-api
+
+        steps:
+            # Each job runs on a fresh runner, so we need to checkout again
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Log in to GHCR
+              uses: docker/login-action@v4
+              with:
+                  registry: ghcr.io
+                  # Both values are provided by Actions on every run
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Build and push
+              uses: docker/build-push-action@v7
+              with:
+                  # Build context: the repo root, where the Dockerfile lives
+                  context: .
+                  push: true
+                  tags: |
+                    ghcr.io/${{ env.IMAGE }}:${{ github.sha }}
+                    ghcr.io/${{ env.IMAGE }}:latest
+
+    # TODO: Add a deploy to App Service job
