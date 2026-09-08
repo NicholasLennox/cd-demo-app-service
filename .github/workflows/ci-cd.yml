@@ -73,32 +73,22 @@ jobs:
                     ${{ env.IMAGE }}:${{ github.sha }}
                     ${{ env.IMAGE }}:latest
 
-    # Job created for the lesson
+    # Job added this lesson
     deploy-app-service:
       # There is nothing to deploy until the image is in the registry
       needs: build-and-push
 
       runs-on: ubuntu-latest
 
-      permissions:
-        # Lets Actions create the OIDC token that azure/login trades for an Azure
-        # one, so no Azure password is stored in the repository
-        id-token: write
-
       env:
         APP_SERVICE_NAME: cd-demo-bed2
 
       steps:
-        - name: Log into Azure
-          uses: azure/login@v3
-          with:
-            client-id: ${{ secrets.AZURE_CLIENT_ID }}
-            tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-            subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
         - name: Deploy Container to Azure Web App
           uses: azure/webapps-deploy@v3
           with:
             app-name: ${{ env.APP_SERVICE_NAME }}
+            # Pass the publish profile
+            publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
             # Deploy our specific version instead of latest
             images: '${{ env.IMAGE }}:${{ github.sha }}'
